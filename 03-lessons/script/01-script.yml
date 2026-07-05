@@ -1,0 +1,77 @@
+id: nyc_taxi_csv_to_bigquery
+namespace: zoomcamp.gcp
+
+description: |
+  Extract NYC taxi data from a CSV (or CSV.GZ) URL, upload to GCS, and load into BigQuery.
+
+inputs:
+  - id: taxi_type
+    type: STRING 
+    defaults: yellow
+
+  - id: year
+    type: STRING
+    defaults: "2024"
+
+  - id: month
+    type: STRING
+    defaults: "01"
+
+  - id: csv_url
+    type: STRING
+    defaults: "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/yellow_tripdata_2024-01.csv.gz"
+
+  - id: gcp_project
+    type: STRING
+    defaults: your-gcp-project-id
+
+  - id: gcs_bucket
+    type: STRING
+    defaults: your-gcs-bucket
+
+  - id: bq_dataset
+    type: STRING
+    defaults: ny_taxi
+
+  - id: bq_table
+    type: STRING
+    defaults: yellow_taxi_trips
+
+tasks:
+  - id: extract_csv
+    type: io.kestra.plugin.scripts.python.Commands
+    containerImage: python:3.11-slim
+    warningOnStdErr: false
+    beforeCommands:
+      - pip install pandas
+    commands:
+      - python - <<'PY'
+        import os
+        import pandas as pd
+
+        url = "{{ inputs.csv_url }}"
+        out = "nyc_taxi.csv"
+
+        # pandas will handle .csv and .csv.gz URLs
+        df = pd.read_csv(url)
+        df.to_csv(out, index=False)
+
+        print(f"Wrote {len(df)} rows to {out}")
+        PY
+    outputFiles:
+      - nyc_taxi.csv
+
+  - id: upload_to_gcs
+    type: io.kestra.plugin.gcp.gcs.Upload
+    from: "{{ outputs.extract_csv.outputFiles['nyc_taxi.csv'] }}"
+    to: "gs://{{ inputs.gcs_bucket }}/raw/{{ inputs.taxi_type }}/{{ inputs.year }}/{{ inputs.month }}/nyc_taxi.csv"
+
+  - id: load_to_bigquery
+    type: io.kestra.plugin.gcp.bigquery.LoadFromGcs
+    destinationTable: "{{ inputs.gcp_project }}.{{ inputs.bq_dataset }}.{{ inputs.bq_table }}"
+    sourceUris:
+      - "gs://{{ inputs.gcs_bucket }}/raw/{{ inputs.taxi_type }}/{{ inputs.year }}/{{ inputs.month }}/nyc_taxi.csv"
+    format: CSV
+    autodetect: true
+    skipLeadingRows: 1
+    writeDisposition: WRITE_APPEND
